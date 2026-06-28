@@ -8,7 +8,9 @@
 extern "C" {
 #endif
 
+#if WILI8JAM_ENABLE_LUA_BINDINGS
 #include "lua.h"
+#endif
 
 // Waveform types
 #define WAVE_SINE     0
@@ -39,7 +41,9 @@ void audio_pause(void);
 void audio_resume(void);
 
 // Lua library opener
+#if WILI8JAM_ENABLE_LUA_BINDINGS
 int luaopen_audio(lua_State *L);
+#endif
 
 #ifdef __cplusplus
 }

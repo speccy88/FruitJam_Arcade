@@ -1,7 +1,9 @@
 #include "input.h"
 #include <string.h>
+#if WILI8JAM_ENABLE_LUA_BINDINGS
 #include "lua.h"
 #include "lauxlib.h"
+#endif
 #include "tusb.h"
 
 // 256-bit bitfield for all HID keycodes (32 bytes)
@@ -404,6 +406,7 @@ void input_xinput_update(uint16_t wButtons, int16_t stickLX, int16_t stickLY, in
 
 // --- Lua bindings ---
 
+#if WILI8JAM_ENABLE_LUA_BINDINGS
 static int l_btn(lua_State *L) {
     int i = (int)luaL_checkinteger(L, 1);
     int p = (int)luaL_optinteger(L, 2, 0);
@@ -480,3 +483,4 @@ int luaopen_input(lua_State *L) {
     luaL_newlib(L, inputlib);
     return 1;
 }
+#endif

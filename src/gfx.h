@@ -7,7 +7,9 @@
 extern "C" {
 #endif
 
+#if WILI8JAM_ENABLE_LUA_BINDINGS
 #include "lua.h"
+#endif
 
 #define GFX_WIDTH  128
 #define GFX_HEIGHT 128
@@ -43,7 +45,9 @@ uint8_t *gfx_get_fb(void);
 void gfx_set_display_pal(const uint8_t *pal);
 
 // Lua library opener
+#if WILI8JAM_ENABLE_LUA_BINDINGS
 int luaopen_gfx(lua_State *L);
+#endif
 
 #ifdef __cplusplus
 }

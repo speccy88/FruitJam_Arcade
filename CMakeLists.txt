@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.30)
+cmake_minimum_required(VERSION 3.28)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 20)
@@ -122,10 +122,38 @@ target_link_libraries(wili8jam PRIVATE
 
 # Increase stack size — default 0x800 (2KB) is too small for Lua + FatFS
 # Lua call chain can be deep; FIL structs now static to save stack space
-target_compile_definitions(wili8jam PRIVATE PICO_STACK_SIZE=0x1000)
+target_compile_definitions(wili8jam PRIVATE PICO_STACK_SIZE=0x1000 WILI8JAM_ENABLE_LUA_BINDINGS=1)
 
 # SDK's stdio_usb handles CDC serial (device descriptors, tud_task timer, etc.)
 pico_enable_stdio_usb(wili8jam 1)
 pico_enable_stdio_uart(wili8jam 0)
 
 pico_add_extra_outputs(wili8jam)
+
+
+# --- Native Fruit Jam rail-shooter executable (no Lua/PICO-8 runtime) ---
+add_executable(fruitjam_railshooter
+    src/native_main.cpp
+    src/native_game.c
+    src/native_pad.c
+    src/native_io.c
+    src/wire3d.c
+    src/dvi.c
+    src/gfx.c
+    src/input.c
+    src/audio.c
+    ${FWUSBHOST_TINYUSB_HOST_SOURCES}
+)
+pico_generate_pio_header(fruitjam_railshooter ${CMAKE_CURRENT_SOURCE_DIR}/src/audio_i2s.pio)
+target_include_directories(fruitjam_railshooter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+target_compile_definitions(fruitjam_railshooter PRIVATE PICO_STACK_SIZE=0x1000 WILI8JAM_ENABLE_LUA_BINDINGS=0)
+target_link_libraries(fruitjam_railshooter PRIVATE
+    fwUSBHost pico_stdlib hardware_pio hardware_spi hardware_sync hardware_dma
+    hardware_clocks hardware_i2c hardware_adc
+)
+pico_enable_stdio_usb(fruitjam_railshooter 1)
+pico_enable_stdio_uart(fruitjam_railshooter 0)
+pico_add_extra_outputs(fruitjam_railshooter)

@@ -6,9 +6,13 @@
 #include "gfx.h"
 #include <string.h>
 
+#if WILI8JAM_ENABLE_LUA_BINDINGS
 #include "lua.h"
 #include "lauxlib.h"
+#endif
+#if WILI8JAM_ENABLE_LUA_BINDINGS
 #include "p8_sfx.h"
+#endif
 
 // --- Framebuffers ---
 
@@ -636,7 +640,12 @@ void gfx_print_w(const char *str, int x, int y, int c, int char_w) {
                     case 'y': if (*str) y = (unsigned char)*str++; break; // set Y
                     case 'c': if (*str) str++; break;          // cursor char (consume)
                     case 'd': if (*str) { unsigned char dv = (unsigned char)*str++; bg_col = dv ? (dv & 0xF) : -1; } break;
-                    case 's': if (*str) { p8_sfx_play((unsigned char)*str++, -1, 0, 32); } break;
+                    case 's': if (*str) {
+#if WILI8JAM_ENABLE_LUA_BINDINGS
+                            p8_sfx_play((unsigned char)*str, -1, 0, 32);
+#endif
+                            str++;
+                        } break;
                     case 'w': if (*str) str++; break;          // delay (consume, no-op)
                     // Commands with param byte — consume to keep stream aligned
                     case 'g': case 'n': case 'p': case 'q':
@@ -850,6 +859,7 @@ void gfx_set_display_pal(const uint8_t *pal) {
 
 // --- Lua bindings ---
 
+#if WILI8JAM_ENABLE_LUA_BINDINGS
 static int l_cls(lua_State *L) {
     int c = (int)luaL_optinteger(L, 1, 0);
     gfx_cls(c);
@@ -958,3 +968,4 @@ int luaopen_gfx(lua_State *L) {
     luaL_newlib(L, gfxlib);
     return 1;
 }
+#endif

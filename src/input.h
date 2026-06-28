@@ -8,7 +8,9 @@
 extern "C" {
 #endif
 
+#if WILI8JAM_ENABLE_LUA_BINDINGS
 #include "lua.h"
+#endif
 
 // Key event callback (matches KeyEventCallback signature in fwUSBHostHIDKeyboard.h)
 void input_key_callback(uint8_t keycode, char ascii, bool pressed, uint8_t modifiers);
@@ -60,7 +62,9 @@ int input_mouse_wheel(void);
 void input_mouse_reset(void);
 
 // Lua library opener
+#if WILI8JAM_ENABLE_LUA_BINDINGS
 int luaopen_input(lua_State *L);
+#endif
 
 #ifdef __cplusplus
 }
