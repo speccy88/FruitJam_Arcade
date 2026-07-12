@@ -1,0 +1,148 @@
+name: Release branch UF2s
+
+on:
+  push:
+    tags:
+      - "vector-raid-v*"
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.matrix.outputs.matrix }}
+    steps:
+      - name: Check out release definition
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Resolve release branches
+        id: matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          matrix=$(python3 tools/release_matrix.py release-branches.txt --resolve-origin)
+          echo "matrix=${matrix}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.prepare.outputs.matrix) }}
+    steps:
+      - name: Check out ${{ matrix.branch }}
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
+          fetch-depth: 1
+
+      - name: Install Pico build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            gcc-arm-none-eabi \
+            libnewlib-arm-none-eabi \
+            libstdc++-arm-none-eabi-newlib \
+            ninja-build
+
+      - name: Fetch Pico SDK 2.2.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone \
+            --branch 2.2.0 \
+            --depth 1 \
+            --recurse-submodules \
+            --shallow-submodules \
+            https://github.com/raspberrypi/pico-sdk.git \
+            "$RUNNER_TEMP/pico-sdk"
+
+      - name: Build UF2
+        env:
+          ASSET_LABEL: ${{ matrix.label }}
+          SOURCE_BRANCH: ${{ matrix.branch }}
+          SOURCE_SHA: ${{ matrix.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cmake \
+            -S . \
+            -B build-release \
+            -G Ninja \
+            -DPICO_SDK_PATH="$RUNNER_TEMP/pico-sdk"
+          cmake --build build-release --target fruitjam_railshooter --parallel
+
+          short_sha=$SOURCE_SHA
+          short_sha=${short_sha:0:7}
+          asset="fruitjam-vector-raid-${ASSET_LABEL}-${short_sha}.uf2"
+          mkdir -p release-output
+          cp build-release/fruitjam_railshooter.uf2 "release-output/${asset}"
+          (
+            cd release-output
+            sha256sum "${asset}" > "${asset}.sha256"
+          )
+          printf '%s\t%s\t%s\t%s\n' \
+            "$ASSET_LABEL" \
+            "$SOURCE_BRANCH" \
+            "$SOURCE_SHA" \
+            "$asset" \
+            > "release-output/${ASSET_LABEL}.provenance"
+
+      - name: Upload ${{ matrix.label }} UF2
+        uses: actions/upload-artifact@v4
+        with:
+          name: uf2-${{ matrix.label }}
+          path: release-output/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download every branch build
+        uses: actions/download-artifact@v4
+        with:
+          pattern: uf2-*
+          path: release-output
+          merge-multiple: true
+
+      - name: Assemble checksums and provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd release-output
+          cat -- *.uf2.sha256 | sort -k2 > SHA256SUMS.txt
+          cat -- *.provenance | sort > BUILD-PROVENANCE.txt
+          rm -- *.uf2.sha256 *.provenance
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo "Fruit Jam: Vector Raid UF2 builds"
+            echo
+            echo "Each UF2 was built from the branch and immutable commit recorded below:"
+            echo
+            echo '```text'
+            cat release-output/BUILD-PROVENANCE.txt
+            echo '```'
+          } > release-notes.md
+
+          gh release create "$GITHUB_REF_NAME" \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "Fruit Jam: Vector Raid ${GITHUB_REF_NAME}" \
+            --notes-file release-notes.md \
+            release-output/*.uf2 \
+            release-output/SHA256SUMS.txt \
+            release-output/BUILD-PROVENANCE.txt

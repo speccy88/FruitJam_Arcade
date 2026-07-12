@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(PICO_PLATFORM rp2350)
 set(PICO_BOARD adafruit_fruit_jam CACHE STRING "Board type")
+option(ENABLE_ADC_AIM "Enable A0/A1 analog arcade aiming for the native rail-shooter" OFF)
 
 if(WIN32)
     set(USERHOME $ENV{USERPROFILE})
@@ -149,7 +150,11 @@ target_include_directories(fruitjam_railshooter PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
-target_compile_definitions(fruitjam_railshooter PRIVATE PICO_STACK_SIZE=0x1000 WILI8JAM_ENABLE_LUA_BINDINGS=0)
+target_compile_definitions(fruitjam_railshooter PRIVATE
+    PICO_STACK_SIZE=0x1000
+    WILI8JAM_ENABLE_LUA_BINDINGS=0
+    ENABLE_ADC_AIM=$<BOOL:${ENABLE_ADC_AIM}>
+)
 target_link_libraries(fruitjam_railshooter PRIVATE
     fwUSBHost pico_stdlib hardware_pio hardware_spi hardware_sync hardware_dma
     hardware_clocks hardware_i2c hardware_adc

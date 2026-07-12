@@ -1,0 +1,3 @@
+# Asset label  Git branch
+stable         codex/create-native-rail-shooter-game-firmware
+next           codex/vector-raid-next

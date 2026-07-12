@@ -6,6 +6,7 @@
 #include "hardware/pio.h"
 #include "hardware/dma.h"
 #include "hardware/irq.h"
+#include "hardware/sync.h"
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #if WILI8JAM_ENABLE_LUA_BINDINGS
@@ -369,24 +370,30 @@ bool audio_init(void) {
 
 void audio_tone(int channel, float freq, int duration_ms, int waveform) {
     if (channel < 0 || channel >= AUDIO_NUM_CHANNELS) return;
+    if (freq <= 0.0f) return;
     if (waveform < 0 || waveform > WAVE_NOISE) waveform = WAVE_SQUARE;
 
+    const uint32_t irq_state = save_and_disable_interrupts();
     synth_channel_t *ch = &channels[channel];
+    ch->active = false;
     ch->phase = 0;
     ch->phase_inc = (uint32_t)(freq * 4294967296.0f / (float)SAMPLE_RATE);
     ch->waveform = (uint8_t)waveform;
     ch->remaining = (duration_ms > 0) ? (int32_t)((duration_ms * SAMPLE_RATE) / 1000) : -1;
     ch->noise_lfsr = 0xACE1;
     ch->active = true;
+    restore_interrupts(irq_state);
 }
 
 void audio_stop(int channel) {
+    const uint32_t irq_state = save_and_disable_interrupts();
     if (channel < 0) {
         for (int i = 0; i < AUDIO_NUM_CHANNELS; i++)
             channels[i].active = false;
     } else if (channel < AUDIO_NUM_CHANNELS) {
         channels[channel].active = false;
     }
+    restore_interrupts(irq_state);
 }
 
 void audio_volume(int level) {
