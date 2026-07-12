@@ -5,8 +5,7 @@ branch in `release-branches.txt`.
 
 The initial branches are:
 
-- `stable`: `codex/create-native-rail-shooter-game-firmware`, the preserved
-  known-good game
+- `stable`: `main`, the current known-good arcade foundation
 - `next`: `codex/vector-raid-next`, where new features are developed
 
 ## Add another branch

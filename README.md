@@ -198,8 +198,7 @@ Pico-PIO-USB/            PIO USB transport
 
 ## Releases and branches
 
-The preserved playable branch is
-`codex/create-native-rail-shooter-game-firmware`. New feature work happens on
+The stable arcade foundation lives on `main`. New feature work happens on
 `codex/vector-raid-next`.
 
 Tags matching `vector-raid-v*` run the release workflow and build a separately
