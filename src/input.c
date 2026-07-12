@@ -1,16 +1,12 @@
 #include "input.h"
 #include <string.h>
-#if WILI8JAM_ENABLE_LUA_BINDINGS
-#include "lua.h"
-#include "lauxlib.h"
-#endif
 #include "tusb.h"
 
 // 256-bit bitfield for all HID keycodes (32 bytes)
 static uint8_t key_state[32];
 static uint8_t key_prev[32];
 
-// Character input ring buffer for REPL keyboard input
+// Character input ring buffer for future text-entry screens.
 #define CHAR_BUF_SIZE 64
 static char char_buf[CHAR_BUF_SIZE];
 static volatile int char_head = 0;
@@ -20,8 +16,8 @@ static volatile int char_tail = 0;
 // 0 = not held, 1..15 = initial delay, 16+ = repeating every 4 frames
 static uint8_t btnp_hold[2][7]; // 7 buttons: 0-5 + menu(6)
 
-// PICO-8 button keycodes: [player][button][alternatives]
-// btn 0=left, 1=right, 2=up, 3=down, 4=O, 5=X, 6=menu
+// Arcade button keycodes: [player][button][alternatives]
+// btn 0=left, 1=right, 2=up, 3=down, 4=primary, 5=secondary, 6=menu
 #define MAX_ALTS 3
 
 static const uint8_t p1_keys[7][MAX_ALTS] = {
@@ -77,18 +73,13 @@ void input_key_callback(uint8_t keycode, char ascii, bool pressed, uint8_t modif
     if (pressed) {
         key_set(key_state, keycode);
 
-        // Don't buffer chars when Ctrl is held (editor handles Ctrl combos via keycodes)
+        // Control combinations are consumed as raw key state, not text input.
         bool ctrl = modifiers & (KEYBOARD_MODIFIER_LEFTCTRL | KEYBOARD_MODIFIER_RIGHTCTRL);
         if (ctrl) return;
 
-        // PICO-8: Shift+letter → P8SCII 128-153 (special wide glyphs)
         unsigned char buf_ch = (unsigned char)ascii;
-        if (ascii >= 'A' && ascii <= 'Z' &&
-            (modifiers & (KEYBOARD_MODIFIER_LEFTSHIFT | KEYBOARD_MODIFIER_RIGHTSHIFT))) {
-            buf_ch = 128 + (ascii - 'A');
-        }
-        // Buffer printable ASCII + P8SCII, enter, and backspace
-        if ((buf_ch >= 32 && buf_ch < 127) || buf_ch >= 128) {
+        // Buffer printable ASCII, enter, and backspace.
+        if (buf_ch >= 32 && buf_ch < 127) {
             int next = (char_head + 1) % CHAR_BUF_SIZE;
             if (next != char_tail) {
                 char_buf[char_head] = (char)buf_ch;
@@ -227,22 +218,22 @@ bool input_key(uint8_t keycode) {
 #define VKEY_GP1_RIGHT 0xF1
 #define VKEY_GP1_UP    0xF2
 #define VKEY_GP1_DOWN  0xF3
-#define VKEY_GP1_O     0xF4  // btn 4 (face button 1 / A / South)
-#define VKEY_GP1_X     0xF5  // btn 5 (face button 2 / B / East)
+#define VKEY_GP1_PRIMARY   0xF4  // btn 4 (face button 1 / A / South)
+#define VKEY_GP1_SECONDARY 0xF5  // btn 5 (face button 2 / B / East)
 #define VKEY_GP1_MENU  0xF6  // btn 6 (start/menu, P1 only)
 
 #define VKEY_GP2_LEFT  0xE8
 #define VKEY_GP2_RIGHT 0xE9
 #define VKEY_GP2_UP    0xEA
 #define VKEY_GP2_DOWN  0xEB
-#define VKEY_GP2_O     0xEC  // btn 4 (face button 1 / A / South)
-#define VKEY_GP2_X     0xED  // btn 5 (face button 2 / B / East)
+#define VKEY_GP2_PRIMARY   0xEC  // btn 4 (face button 1 / A / South)
+#define VKEY_GP2_SECONDARY 0xED  // btn 5 (face button 2 / B / East)
 
 // Virtual keycodes indexed by player: [player][button]
-// btn order: left, right, up, down, O, X, menu
+// btn order: left, right, up, down, primary, secondary, menu
 static const uint8_t gamepad_vkeys[2][7] = {
-    { VKEY_GP1_LEFT, VKEY_GP1_RIGHT, VKEY_GP1_UP, VKEY_GP1_DOWN, VKEY_GP1_O, VKEY_GP1_X, VKEY_GP1_MENU },
-    { VKEY_GP2_LEFT, VKEY_GP2_RIGHT, VKEY_GP2_UP, VKEY_GP2_DOWN, VKEY_GP2_O, VKEY_GP2_X, 0 },
+    { VKEY_GP1_LEFT, VKEY_GP1_RIGHT, VKEY_GP1_UP, VKEY_GP1_DOWN, VKEY_GP1_PRIMARY, VKEY_GP1_SECONDARY, VKEY_GP1_MENU },
+    { VKEY_GP2_LEFT, VKEY_GP2_RIGHT, VKEY_GP2_UP, VKEY_GP2_DOWN, VKEY_GP2_PRIMARY, VKEY_GP2_SECONDARY, 0 },
 };
 
 void input_gamepad_report(const uint8_t *report, uint16_t len, int player) {
@@ -286,7 +277,7 @@ void input_gamepad_report(const uint8_t *report, uint16_t len, int player) {
     if (up)    key_set(key_state, vk[2]);  else key_clear(key_state, vk[2]);
     if (down)  key_set(key_state, vk[3]);  else key_clear(key_state, vk[3]);
 
-    // Face buttons: bit 0 = A/South → O, bit 1 = B/East → X
+    // Face buttons: bit 0 = primary, bit 1 = secondary.
     if (face_buttons & 0x01) key_set(key_state, vk[4]); else key_clear(key_state, vk[4]);
     if (face_buttons & 0x02) key_set(key_state, vk[5]); else key_clear(key_state, vk[5]);
 }
@@ -350,7 +341,7 @@ void input_dualsense_report(const uint8_t *report, uint16_t len, int player, uin
     if (down)  key_set(key_state, vk[3]);  else key_clear(key_state, vk[3]);
 
     // Face buttons (high nibble): Square(0) Cross(1) Circle(2) Triangle(3)
-    // Cross → O (btn4), Circle → X (btn5)
+    // Cross is primary (btn4); Circle is secondary (btn5).
     uint8_t face = hat_face >> 4;
     if (face & 0x02) key_set(key_state, vk[4]); else key_clear(key_state, vk[4]); // Cross
     if (face & 0x04) key_set(key_state, vk[5]); else key_clear(key_state, vk[5]); // Circle
@@ -394,7 +385,7 @@ void input_xinput_update(uint16_t wButtons, int16_t stickLX, int16_t stickLY, in
     if (up)    key_set(key_state, vk[2]);  else key_clear(key_state, vk[2]);
     if (down)  key_set(key_state, vk[3]);  else key_clear(key_state, vk[3]);
 
-    // A → O (btn 4), B → X (btn 5)
+    // A is primary (btn 4); B is secondary (btn 5).
     if (wButtons & XINPUT_GAMEPAD_A) key_set(key_state, vk[4]); else key_clear(key_state, vk[4]);
     if (wButtons & XINPUT_GAMEPAD_B) key_set(key_state, vk[5]); else key_clear(key_state, vk[5]);
 
@@ -403,84 +394,3 @@ void input_xinput_update(uint16_t wButtons, int16_t stickLX, int16_t stickLY, in
         if (wButtons & XINPUT_GAMEPAD_START) key_set(key_state, vk[6]); else key_clear(key_state, vk[6]);
     }
 }
-
-// --- Lua bindings ---
-
-#if WILI8JAM_ENABLE_LUA_BINDINGS
-static int l_btn(lua_State *L) {
-    int i = (int)luaL_checkinteger(L, 1);
-    int p = (int)luaL_optinteger(L, 2, 0);
-    lua_pushboolean(L, input_btn(i, p));
-    return 1;
-}
-
-static int l_btnp(lua_State *L) {
-    int i = (int)luaL_checkinteger(L, 1);
-    int p = (int)luaL_optinteger(L, 2, 0);
-    lua_pushboolean(L, input_btnp(i, p));
-    return 1;
-}
-
-static int l_key(lua_State *L) {
-    int keycode = (int)luaL_checkinteger(L, 1);
-    if (keycode < 0 || keycode > 255) {
-        lua_pushboolean(L, 0);
-    } else {
-        lua_pushboolean(L, input_key((uint8_t)keycode));
-    }
-    return 1;
-}
-
-static int l_update(lua_State *L) {
-    (void)L;
-    input_update();
-    return 0;
-}
-
-static int l_debug(lua_State *L) {
-    (void)L;
-    // Check all possible device addresses for mounted HID devices
-    printf("USB Host debug:\n");
-    printf("  tuh_inited: %s\n", tuh_inited() ? "yes" : "no");
-    for (uint8_t addr = 1; addr <= CFG_TUH_DEVICE_MAX; addr++) {
-        if (tuh_mounted(addr)) {
-            printf("  Device addr %d: mounted\n", addr);
-            uint8_t itf_count = tuh_hid_itf_get_count(addr);
-            printf("    HID interfaces: %d\n", itf_count);
-            for (uint8_t itf = 0; itf < itf_count; itf++) {
-                uint8_t proto = tuh_hid_interface_protocol(addr, itf);
-                printf("    itf %d: proto=%d (%s)\n", itf, proto,
-                    proto == 1 ? "keyboard" : proto == 2 ? "mouse" : "other");
-            }
-        }
-    }
-    // Show raw key_state — any bits set?
-    int any_keys = 0;
-    for (int i = 0; i < 32; i++) {
-        if (key_state[i]) { any_keys = 1; break; }
-    }
-    printf("  Keys held: %s\n", any_keys ? "yes" : "none");
-    if (any_keys) {
-        for (int i = 0; i < 256; i++) {
-            if (key_is_set(key_state, (uint8_t)i)) {
-                printf("    keycode %d\n", i);
-            }
-        }
-    }
-    return 0;
-}
-
-static const luaL_Reg inputlib[] = {
-    {"btn",    l_btn},
-    {"btnp",   l_btnp},
-    {"key",    l_key},
-    {"update", l_update},
-    {"debug",  l_debug},
-    {NULL, NULL}
-};
-
-int luaopen_input(lua_State *L) {
-    luaL_newlib(L, inputlib);
-    return 1;
-}
-#endif

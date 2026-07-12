@@ -1,6 +1,10 @@
 # macOS host simulator
 
-This standalone SDL2 target runs the same native game, wireframe renderer, raw-pad state, and 128x128 graphics implementation as the Fruit Jam firmware. It does not build or link the Pico SDK, TinyUSB, DVI, Lua, or PICO-8 runtime. GPIO effects are harmless host-side shims, and mouse coordinates feed the game's existing optional analog-aim interface.
+This standalone SDL2 target runs the same native game, wireframe renderer,
+raw-pad state, and 128x128 graphics implementation as the Fruit Jam firmware.
+The desktop target replaces the board-specific DVI, USB, audio, and GPIO layers
+with host adapters; GPIO effects are harmless shims, and mouse coordinates feed
+the same aiming boundary intended for future physical arcade controls.
 
 ## Requirements
 

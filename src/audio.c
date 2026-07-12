@@ -1,7 +1,4 @@
 #include "audio.h"
-#if WILI8JAM_ENABLE_LUA_BINDINGS
-#include "p8_sfx.h"
-#endif
 #include "hardware/i2c.h"
 #include "hardware/pio.h"
 #include "hardware/dma.h"
@@ -9,9 +6,6 @@
 #include "hardware/sync.h"
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
-#if WILI8JAM_ENABLE_LUA_BINDINGS
-#include "lauxlib.h"
-#endif
 #include "audio_i2s.pio.h"
 #include <string.h>
 #include <math.h>
@@ -56,7 +50,7 @@ static int32_t audio_buf[2][BUFFER_SAMPLES];  // stereo pairs packed as int32
 static volatile int cur_buf;  // which buffer DMA is reading from
 static int dma_ch_a, dma_ch_b;
 
-// When true, ISR fills buffers with silence instead of mixing (avoids PSRAM access)
+// When true, the ISR fills buffers with silence instead of mixing.
 static volatile bool audio_paused = false;
 
 // --- Codec I2C helpers ---
@@ -207,7 +201,7 @@ static inline int16_t __not_in_flash_func(synth_sample)(synth_channel_t *ch) {
             sample = (int16_t)(32767 - (((ch->phase - 0x80000000u) >> 15) & 0xFFFF));
         break;
     case WAVE_NOISE:
-        // 16-bit LFSR (taps at bits 0, 1, 5, 6 — matches PICO-8 noise)
+        // 16-bit LFSR with taps at bits 0, 1, 5, and 6.
         if (idx != ((ch->phase - ch->phase_inc) >> 24)) {
             uint16_t bit = ((ch->noise_lfsr >> 0) ^ (ch->noise_lfsr >> 1) ^
                             (ch->noise_lfsr >> 5) ^ (ch->noise_lfsr >> 6)) & 1;
@@ -243,10 +237,6 @@ static void __not_in_flash_func(fill_audio_buffer)(int32_t *buf, int count) {
         for (int c = 0; c < AUDIO_NUM_CHANNELS; c++) {
             mix += synth_sample(&channels[c]);
         }
-#if WILI8JAM_ENABLE_LUA_BINDINGS
-        // PICO-8 SFX engine channels
-        mix += p8_sfx_mix_sample();
-#endif
         // Clip to int16
         if (mix > 32767) mix = 32767;
         if (mix < -32768) mix = -32768;
@@ -419,43 +409,3 @@ void audio_volume(int level) {
     codec_write_reg(0x41, vol);  // Left DAC volume
     codec_write_reg(0x42, vol);  // Right DAC volume
 }
-
-// --- Lua bindings ---
-
-// audio.tone(freq, [duration_ms], [waveform], [channel])
-#if WILI8JAM_ENABLE_LUA_BINDINGS
-static int l_audio_tone(lua_State *L) {
-    float freq = (float)luaL_checknumber(L, 1);
-    int duration = (int)luaL_optnumber(L, 2, 0);
-    int waveform = (int)luaL_optnumber(L, 3, WAVE_SQUARE);
-    int channel = (int)luaL_optnumber(L, 4, 0);
-    audio_tone(channel, freq, duration, waveform);
-    return 0;
-}
-
-// audio.stop([channel])
-static int l_audio_stop(lua_State *L) {
-    int channel = (int)luaL_optnumber(L, 1, -1);
-    audio_stop(channel);
-    return 0;
-}
-
-// audio.volume(level)
-static int l_audio_volume(lua_State *L) {
-    int level = (int)luaL_checknumber(L, 1);
-    audio_volume(level);
-    return 0;
-}
-
-static const luaL_Reg audiolib[] = {
-    {"tone",   l_audio_tone},
-    {"stop",   l_audio_stop},
-    {"volume", l_audio_volume},
-    {NULL, NULL}
-};
-
-int luaopen_audio(lua_State *L) {
-    luaL_newlib(L, audiolib);
-    return 1;
-}
-#endif

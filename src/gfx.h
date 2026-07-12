@@ -7,10 +7,6 @@
 extern "C" {
 #endif
 
-#if WILI8JAM_ENABLE_LUA_BINDINGS
-#include "lua.h"
-#endif
-
 #define GFX_WIDTH  128
 #define GFX_HEIGHT 128
 
@@ -35,7 +31,7 @@ void gfx_print_w(const char *str, int x, int y, int c, int char_w);
 int  gfx_text_width(const char *str, int char_w);
 void gfx_flip(void);
 
-// Redirect the 4-bit framebuffer to an external buffer (e.g., PICO-8 screen memory).
+// Redirect the 4-bit framebuffer to an external buffer.
 // Pass NULL to restore the default internal buffer.
 void gfx_set_fb(uint8_t *buf);
 uint8_t *gfx_get_fb(void);
@@ -43,11 +39,6 @@ uint8_t *gfx_get_fb(void);
 // Set display palette for gfx_flip(). Maps framebuffer color index to display color.
 // Pass NULL to disable (identity mapping). The pointer must remain valid.
 void gfx_set_display_pal(const uint8_t *pal);
-
-// Lua library opener
-#if WILI8JAM_ENABLE_LUA_BINDINGS
-int luaopen_gfx(lua_State *L);
-#endif
 
 #ifdef __cplusplus
 }

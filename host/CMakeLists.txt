@@ -34,10 +34,6 @@ target_include_directories(fruitjam_railshooter_host PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../src
 )
 
-target_compile_definitions(fruitjam_railshooter_host PRIVATE
-    WILI8JAM_ENABLE_LUA_BINDINGS=0
-)
-
 target_link_libraries(fruitjam_railshooter_host PRIVATE ${HOST_SDL_TARGET})
 
 if(NOT MSVC)

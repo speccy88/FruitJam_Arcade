@@ -8,10 +8,6 @@
 extern "C" {
 #endif
 
-#if WILI8JAM_ENABLE_LUA_BINDINGS
-#include "lua.h"
-#endif
-
 // Waveform types
 #define WAVE_SINE     0
 #define WAVE_SQUARE   1
@@ -34,16 +30,9 @@ void audio_stop(int channel);
 // Set DAC volume level (0-7). Writes to codec registers via I2C.
 void audio_volume(int level);
 
-// Pause/resume audio mixing. While paused, the DMA ISR outputs silence
-// instead of reading PSRAM. Use around SD card operations to prevent
-// QSPI bus contention that can corrupt the SD card.
+// Pause/resume audio mixing. While paused, the DMA ISR outputs silence.
 void audio_pause(void);
 void audio_resume(void);
-
-// Lua library opener
-#if WILI8JAM_ENABLE_LUA_BINDINGS
-int luaopen_audio(lua_State *L);
-#endif
 
 #ifdef __cplusplus
 }
