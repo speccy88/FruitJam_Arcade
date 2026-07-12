@@ -2,12 +2,13 @@
  * DVI output driver for Adafruit Fruit Jam (RP2350B) via HSTX.
  * Adapted from MicroPython/Adafruit picodvi (MIT License).
  *
- * Outputs 640x480@60Hz DVI from a 128x128 RGB565 framebuffer.
- * 3x pixel scaling (384x384) centered with black letterbox borders.
+ * Outputs 640x480@60Hz DVI from the RGB565 graphics framebuffer.
+ * A 384x384 framebuffer centered with black letterbox borders.
  * Fully DMA-driven — no CPU involvement after init.
  */
 
 #include "dvi.h"
+#include "gfx.h"
 #include "pico/stdlib.h"
 #include "hardware/dma.h"
 #include "hardware/structs/bus_ctrl.h"
@@ -47,9 +48,13 @@
 #define HSTX_CMD_NOP         (0xfu << 12)
 
 // --- Framebuffer and scaling ---
-#define FB_WIDTH  128
-#define FB_HEIGHT 128
-#define OUTPUT_SCALING 3
+#if GFX_SCALE != 3
+#error "Fruit Jam DVI requires GFX_SCALE=3 (384x384 framebuffer)"
+#endif
+
+#define FB_WIDTH  GFX_WIDTH
+#define FB_HEIGHT GFX_HEIGHT
+#define OUTPUT_SCALING 1
 
 // --- HSTX command lists for blanking and active lines ---
 #define VSYNC_LEN  6
@@ -72,7 +77,7 @@ static uint32_t vblank_vsync_on[VSYNC_LEN] = {
     SYNC_V0_H1
 };
 
-// Horizontal/vertical borders for centered 3x display
+// Horizontal/vertical borders for the centered 384x384 display
 #define H_BORDER ((H_ACTIVE_PIXELS - FB_WIDTH * OUTPUT_SCALING) / 2)  // 128
 #define V_BORDER ((V_ACTIVE_LINES - FB_HEIGHT * OUTPUT_SCALING) / 2)  // 48
 
@@ -90,7 +95,7 @@ static uint32_t vactive_pre[VACTIVE_PRE_LEN] = {
     SYNC_V1_H1,
     HSTX_CMD_TMDS_REPEAT | H_BORDER,               // left border (128 black pixels)
     0x00000000,                                      // black pixel data
-    HSTX_CMD_TMDS | (FB_WIDTH * OUTPUT_SCALING)     // 384 active pixels (128 input x 3)
+    HSTX_CMD_TMDS | (FB_WIDTH * OUTPUT_SCALING)     // 384 active pixels
 };
 
 // Content line part 2: right border (sent AFTER pixel data DMA)
@@ -155,17 +160,16 @@ void dvi_init(uint16_t *framebuffer) {
     dma_pixel_channel = dma_claim_unused_channel(true);
     dma_command_channel = dma_claim_unused_channel(true);
 
-    // Build DMA command list for one frame
-    // With pixel scaling > 1, each line needs 4 words for the command channel entry,
-    // and active lines need an additional 4 words for the pixel data entry.
+    // Build the DMA command list for one frame. Each line needs a command
+    // channel entry, and active content lines add pixel and postamble entries.
     uint32_t dma_ctrl_base = (uint32_t)dma_command_channel << DMA_CH0_CTRL_TRIG_CHAIN_TO_LSB |
         DREQ_HSTX << DMA_CH0_CTRL_TRIG_TREQ_SEL_LSB |
         DMA_CH0_CTRL_TRIG_IRQ_QUIET_BITS |
         DMA_CH0_CTRL_TRIG_INCR_READ_BITS |
         DMA_CH0_CTRL_TRIG_EN_BITS;
 
-    // For pixel scaling with 16-bit color: use DMA_SIZE_16 (no BSWAP needed
-    // since our palette stores native little-endian RGB565)
+    // Use 16-bit pixel transfers (no BSWAP needed since the palette stores
+    // native little-endian RGB565).
     uint32_t dma_pixel_ctrl = dma_ctrl_base |
         DMA_SIZE_16 << DMA_CH0_CTRL_TRIG_DATA_SIZE_LSB;
     uint32_t dma_ctrl = dma_ctrl_base |
@@ -184,7 +188,7 @@ void dvi_init(uint16_t *framebuffer) {
 
     size_t cw = 0;
     for (size_t line = 0; line < (size_t)V_TOTAL_LINES; line++) {
-        // Every line writes ctrl + write_addr for pixel scaling
+        // Every line writes ctrl + write_addr for the next DMA transfer.
         dma_commands[cw++] = dma_ctrl;
         dma_commands[cw++] = dma_write_addr;
 
@@ -240,7 +244,7 @@ void dvi_init(uint16_t *framebuffer) {
         4  << HSTX_CTRL_EXPAND_TMDS_L0_NBITS_LSB |  // Blue: 5 bits
         29 << HSTX_CTRL_EXPAND_TMDS_L0_ROT_LSB;     // Blue: bit 4 → bit 7
 
-    // With pixel scaling: 1 pixel per word, repeated 3x by HSTX shift register
+    // One RGB565 pixel per shifter step; OUTPUT_SCALING controls repetition.
     hstx_ctrl_hw->expand_shift =
         OUTPUT_SCALING << HSTX_CTRL_EXPAND_SHIFT_ENC_N_SHIFTS_LSB |
         16             << HSTX_CTRL_EXPAND_SHIFT_ENC_SHIFT_LSB   |

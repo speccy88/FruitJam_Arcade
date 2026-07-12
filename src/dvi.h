@@ -8,9 +8,9 @@ extern "C" {
 #endif
 
 // Initialize HSTX DVI output for 640x480@60Hz.
-// framebuffer: pointer to 128x128 RGB565 buffer (32768 bytes)
+// framebuffer: pointer to the 384x384 RGB565 graphics buffer.
 // The display will continuously scan out this buffer via DMA,
-// with 3x horizontal scaling and 3x vertical scaling (128->384 centered in 640x480).
+// centered in the 640x480 active area.
 void dvi_init(uint16_t *framebuffer);
 
 #ifdef __cplusplus

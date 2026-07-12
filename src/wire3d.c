@@ -5,6 +5,8 @@
 #include <math.h>
 
 #define NEAR_Z 0.8f
+#define CORRIDOR_FAR_Z 31.0f
+#define CORRIDOR_PATH_SEGMENTS 4
 
 typedef struct {
     const Vec3 *vertices;
@@ -86,19 +88,48 @@ void wire3d_set_view(float x, float y, float roll) {
     }
 }
 
-bool wire3d_project(Vec3 v, float *sx, float *sy) {
+static bool project_view(Vec3 v, float x, float y, float roll,
+                         float roll_cos, float roll_sin, float *sx, float *sy) {
     if (v.z <= NEAR_Z) return false;
     const float f = 58.0f / v.z;
     float px = v.x * f;
     float py = -v.y * f;
-    if (view_roll != 0.0f) {
-        const float rx = px * view_cos - py * view_sin;
-        py = px * view_sin + py * view_cos;
+    if (roll != 0.0f) {
+        const float rx = px * roll_cos - py * roll_sin;
+        py = px * roll_sin + py * roll_cos;
         px = rx;
     }
-    *sx = 64.0f + px + view_x;
-    *sy = 64.0f + py + view_y;
+    *sx = 64.0f + px + x;
+    *sy = 64.0f + py + y;
     return true;
+}
+
+bool wire3d_project_view(Vec3 v, float x, float y, float roll,
+                         float *sx, float *sy) {
+    const float roll_cos = roll != 0.0f ? cosf(roll) : 1.0f;
+    const float roll_sin = roll != 0.0f ? sinf(roll) : 0.0f;
+    return project_view(v, x, y, roll, roll_cos, roll_sin, sx, sy);
+}
+
+bool wire3d_project_view_rot(Vec3 v, float x, float y,
+                             float roll_cos, float roll_sin,
+                             float *sx, float *sy) {
+    const float has_roll = roll_cos != 1.0f || roll_sin != 0.0f ? 1.0f : 0.0f;
+    return project_view(v, x, y, has_roll, roll_cos, roll_sin, sx, sy);
+}
+
+bool wire3d_project(Vec3 v, float *sx, float *sy) {
+    return project_view(v, view_x, view_y, view_roll, view_cos, view_sin, sx, sy);
+}
+
+Vec3 wire3d_curve_point(Vec3 v, float bend_x, float bend_y) {
+    float t = (v.z - NEAR_Z) / (CORRIDOR_FAR_Z - NEAR_Z);
+    if (t < 0.0f) t = 0.0f;
+    if (t > 1.0f) t = 1.0f;
+    const float curve = t * t * (3.0f - 2.0f * t);
+    v.x += bend_x * curve;
+    v.y += bend_y * curve;
+    return v;
 }
 
 static Vec3 clipped_point(Vec3 a, Vec3 b) {
@@ -155,25 +186,48 @@ void wire3d_draw_mesh(int id, float x, float y, float z, float scale, int color)
     wire3d_draw_mesh_rot(id, x, y, z, scale, 0.0f, color);
 }
 
-void wire3d_draw_corridor_ex(float scroll, int floor_color, int ceiling_color,
-                             int side_color) {
+static void draw_corridor_rail(float x, float y, int color,
+                               float bend_x, float bend_y) {
+    const float start_z = NEAR_Z + 0.02f;
+    Vec3 previous = wire3d_curve_point((Vec3){x, y, start_z}, bend_x, bend_y);
+    for (int segment = 1; segment <= CORRIDOR_PATH_SEGMENTS; ++segment) {
+        const float progress = (float)segment / (float)CORRIDOR_PATH_SEGMENTS;
+        const float z = start_z + (CORRIDOR_FAR_Z - start_z) * progress;
+        const Vec3 next = wire3d_curve_point((Vec3){x, y, z}, bend_x, bend_y);
+        wire3d_line(previous, next, color);
+        previous = next;
+    }
+}
+
+void wire3d_draw_corridor_path_ex(float scroll, int floor_color, int ceiling_color,
+                                  int side_color, float bend_x, float bend_y) {
     float wrapped = fmodf(scroll, 2.0f);
     if (wrapped < 0.0f) wrapped += 2.0f;
     for (int i = 0; i < 15; ++i) {
         const float z = 1.1f + (float)i * 2.0f - wrapped;
-        wire3d_line((Vec3){-4, -2, z}, (Vec3){4, -2, z}, floor_color);
-        wire3d_line((Vec3){-4, 2, z}, (Vec3){4, 2, z}, ceiling_color);
-        wire3d_line((Vec3){-4, -2, z}, (Vec3){-4, 2, z}, side_color);
-        wire3d_line((Vec3){4, -2, z}, (Vec3){4, 2, z}, side_color);
+        const Vec3 floor_left = wire3d_curve_point((Vec3){-4, -2, z}, bend_x, bend_y);
+        const Vec3 floor_right = wire3d_curve_point((Vec3){4, -2, z}, bend_x, bend_y);
+        const Vec3 ceiling_left = wire3d_curve_point((Vec3){-4, 2, z}, bend_x, bend_y);
+        const Vec3 ceiling_right = wire3d_curve_point((Vec3){4, 2, z}, bend_x, bend_y);
+        wire3d_line(floor_left, floor_right, floor_color);
+        wire3d_line(ceiling_left, ceiling_right, ceiling_color);
+        wire3d_line(floor_left, ceiling_left, side_color);
+        wire3d_line(floor_right, ceiling_right, side_color);
     }
     for (int x = -4; x <= 4; x += 2) {
-        wire3d_line((Vec3){(float)x, -2, 0.82f}, (Vec3){(float)x, -2, 31}, floor_color);
-        wire3d_line((Vec3){(float)x, 2, 0.82f}, (Vec3){(float)x, 2, 31}, ceiling_color);
+        draw_corridor_rail((float)x, -2.0f, floor_color, bend_x, bend_y);
+        draw_corridor_rail((float)x, 2.0f, ceiling_color, bend_x, bend_y);
     }
     for (int y = -2; y <= 2; y += 2) {
-        wire3d_line((Vec3){-4, (float)y, 0.82f}, (Vec3){-4, (float)y, 31}, side_color);
-        wire3d_line((Vec3){4, (float)y, 0.82f}, (Vec3){4, (float)y, 31}, side_color);
+        draw_corridor_rail(-4.0f, (float)y, side_color, bend_x, bend_y);
+        draw_corridor_rail(4.0f, (float)y, side_color, bend_x, bend_y);
     }
+}
+
+void wire3d_draw_corridor_ex(float scroll, int floor_color, int ceiling_color,
+                             int side_color) {
+    wire3d_draw_corridor_path_ex(scroll, floor_color, ceiling_color, side_color,
+                                 0.0f, 0.0f);
 }
 
 void wire3d_draw_corridor(float scroll) {
