@@ -64,7 +64,8 @@ static float voice_sample(HostVoice *voice, float *envelope) {
                                       (voice->noise_lfsr >> 1) ^
                                       (voice->noise_lfsr >> 5) ^
                                       (voice->noise_lfsr >> 6)) & 1u;
-                voice->noise_lfsr = (voice->noise_lfsr >> 1) | (bit << 15);
+                voice->noise_lfsr =
+                    (uint16_t)((voice->noise_lfsr >> 1) | (bit << 15));
                 voice->noise_index = phase_index;
             }
             sample = ((float)voice->noise_lfsr / 32767.5f) - 1.0f;

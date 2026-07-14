@@ -2086,7 +2086,9 @@ static void draw_ambient_rocks(int count, int base_color, int light_color) {
         if (!project_draw_world(x, y, z, &sx, &sy)) continue;
         const int radius = clampi((int)((58.0f / z) * (1.2f + (float)(i % 4) * 0.32f)),
                                   1, 19);
-        if (sx < -radius || sx > 127 + radius || sy < -radius || sy > 127 + radius) continue;
+        const float radius_f = (float)radius;
+        if (sx < -radius_f || sx > 127.0f + radius_f ||
+            sy < -radius_f || sy > 127.0f + radius_f) continue;
         draw_low_poly_rock((int)sx, (int)sy, radius, base_color, light_color, i);
     }
 }
@@ -2116,8 +2118,8 @@ static void draw_forest_geometry(void) {
         float z = fmodf(2.0f + (float)i * 3.8f - scroll * 0.62f, 27.0f);
         if (z < 0.0f) z += 27.0f;
         z += 1.0f;
-        const float side = i & 1 ? 1.0f : -1.0f;
-        const float x = side * (4.1f + (float)(i % 3) * 0.55f);
+        const int side = i & 1 ? 1 : -1;
+        const float x = (float)side * (4.1f + (float)(i % 3) * 0.55f);
         float bx, by, tx, ty;
         if (!project_draw_world(x, -2.1f, z, &bx, &by) ||
             !project_draw_world(x, 3.2f, z, &tx, &ty)) continue;
@@ -2128,8 +2130,8 @@ static void draw_forest_geometry(void) {
         const int crown = clampi(width * 2, 2, 20);
         gfx_circfill((int)tx - side * crown / 2, (int)ty + crown / 3,
                      crown, i % 4 == 0 ? 11 : 3);
-        gfx_trifill((int)tx, (int)ty, (int)tx - (int)(side * crown * 2),
-                    (int)ty + crown, (int)tx + (int)(side * crown),
+        gfx_trifill((int)tx, (int)ty, (int)tx - side * crown * 2,
+                    (int)ty + crown, (int)tx + side * crown,
                     (int)ty + crown * 2, i % 4 == 0 ? 10 : 11);
     }
 }
@@ -2248,7 +2250,8 @@ static void draw_hazard_object(const SetPiece *piece, int x, int y, int radius,
             break;
         case ENV_MOUNTAIN_RUN:
             gfx_trifill(x - r, y + r, x + r, y + r,
-                        x + (int)(sinf(piece->rotation) * r / 3), y - r, 4);
+                        x + (int)(sinf(piece->rotation) * (float)r / 3.0f),
+                        y - r, 4);
             gfx_trifill(x - r / 2, y + r, x + r / 3, y - r,
                         x + r / 4, y + r, 5);
             gfx_line(x + r / 3, y - r, x + r, y + r, 15);
@@ -2266,10 +2269,11 @@ static void draw_hazard_object(const SetPiece *piece, int x, int y, int radius,
             gfx_ellipse(x, y, r, part_size(r, 3, 5), 12);
             for (int spike = 0; spike < 8; ++spike) {
                 const float angle = (float)spike * TAU / 8.0f + piece->rotation;
-                const int ix = x + (int)(cosf(angle) * r * 3 / 5);
-                const int iy = y + (int)(sinf(angle) * r * 2 / 5);
-                const int ox = x + (int)(cosf(angle) * r);
-                const int oy = y + (int)(sinf(angle) * r * 4 / 5);
+                const float radius_f = (float)r;
+                const int ix = x + (int)(cosf(angle) * radius_f * 3.0f / 5.0f);
+                const int iy = y + (int)(sinf(angle) * radius_f * 2.0f / 5.0f);
+                const int ox = x + (int)(cosf(angle) * radius_f);
+                const int oy = y + (int)(sinf(angle) * radius_f * 4.0f / 5.0f);
                 gfx_line(ix, iy, ox, oy, spike & 1 ? 6 : 11);
             }
             gfx_circfill(x, y, part_size(r, 1, 4), 8);

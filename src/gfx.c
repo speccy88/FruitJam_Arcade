@@ -158,7 +158,7 @@ static const uint8_t font_4x6[][6] = {
 static inline void pset_physical_fast(int x, int y, uint8_t c) {
     int idx = y * (GFX_WIDTH / 2) + (x >> 1);
     if (x & 1)
-        fb4[idx] = (fb4[idx] & 0x0F) | (c << 4);
+        fb4[idx] = (uint8_t)((fb4[idx] & 0x0F) | (c << 4));
     else
         fb4[idx] = (fb4[idx] & 0xF0) | c;
 }
@@ -272,7 +272,7 @@ uint16_t *gfx_get_dvi_buffer(void) {
 
 void gfx_cls(int color) {
     uint8_t c = color & 0xF;
-    uint8_t pair = (c << 4) | c;
+    uint8_t pair = (uint8_t)((c << 4) | c);
     memset(fb4, pair, FB4_SIZE);
 }
 
