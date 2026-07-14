@@ -22,12 +22,18 @@ extern "C" {
 
 namespace {
 
-constexpr int kGameWidth = 128;
-constexpr int kGameHeight = 128;
+constexpr int kLogicalWidth = GFX_LOGICAL_WIDTH;
+constexpr int kLogicalHeight = GFX_LOGICAL_HEIGHT;
+constexpr int kFramebufferWidth = GFX_WIDTH;
+constexpr int kFramebufferHeight = GFX_HEIGHT;
 constexpr int kWindowScale = 6;
 constexpr int kStickActivityThreshold = 6000;
 constexpr int kGameStateTitle = 0;
 constexpr int kGameStateGameOver = 4;
+
+static_assert(kFramebufferWidth == kLogicalWidth * GFX_SCALE);
+static_assert(kFramebufferHeight == kLogicalHeight * GFX_SCALE);
+static_assert((kFramebufferWidth & 1) == 0);
 
 constexpr uint16_t kXinputDpadUp = 0x0001;
 constexpr uint16_t kXinputDpadDown = 0x0002;
@@ -41,10 +47,10 @@ constexpr uint16_t kXinputY = 0x8000;
 constexpr uint8_t kHidKeyQ = 20;
 
 constexpr uint32_t kPalette[16] = {
-    0xff000000u, 0xff1d2b53u, 0xff7e2553u, 0xff008751u,
-    0xffab5236u, 0xff5f574fu, 0xffc2c3c7u, 0xfffff1e8u,
-    0xffff004du, 0xffffa300u, 0xffffec27u, 0xff00e436u,
-    0xff29adffu, 0xff83769cu, 0xffff77a8u, 0xffffccaau,
+    0xff050713u, 0xff101b35u, 0xff40204au, 0xff0f4a42u,
+    0xff75402cu, 0xff4b5366u, 0xffa4adbdu, 0xfffff7e8u,
+    0xffff3f5fu, 0xffff9f2du, 0xffffe66du, 0xff40d99cu,
+    0xff3db4ffu, 0xff8174b8u, 0xffed78b5u, 0xffffc0a0u,
 };
 
 struct Controller {
@@ -54,10 +60,12 @@ struct Controller {
 
 void print_usage(const char *program) {
     std::printf(
-        "Usage: %s [--frames N] [--mute] [--demo] [--fast] [--screenshot FILE]\n"
+        "Usage: %s [--frames N] [--mute] [--demo] [--god] [--no-fire] [--fast] [--screenshot FILE]\n"
         "  --frames N  Exit after N rendered frames (useful for smoke tests).\n"
         "  --mute       Do not initialize the SDL audio device.\n"
         "  --demo       Drive the game with a synthetic controller.\n"
+        "  --god        Select GOD TEST for a synthetic demo run.\n"
+        "  --no-fire    Disable synthetic firing during a demo (visual QA).\n"
         "  --fast       Use fixed 60 Hz steps without real-time frame pacing.\n"
         "  --screenshot FILE  Save the final frame as a BMP image.\n",
         program);
@@ -161,13 +169,19 @@ void update_keyboard_and_mouse(SDL_Renderer *renderer, bool mouse_mode) {
     int window_y = 0;
     const Uint32 mouse = SDL_GetMouseState(&window_x, &window_y);
 
-    float logical_x = 64.0f;
-    float logical_y = 64.0f;
-    SDL_RenderWindowToLogical(renderer, window_x, window_y, &logical_x, &logical_y);
+    float render_x = static_cast<float>(kFramebufferWidth) * 0.5f;
+    float render_y = static_cast<float>(kFramebufferHeight) * 0.5f;
+    SDL_RenderWindowToLogical(renderer, window_x, window_y, &render_x, &render_y);
+    const int aim_x = std::clamp(
+        static_cast<int>(std::floor(render_x / static_cast<float>(GFX_SCALE))),
+        0, kLogicalWidth - 1);
+    const int aim_y = std::clamp(
+        static_cast<int>(std::floor(render_y / static_cast<float>(GFX_SCALE))),
+        0, kLogicalHeight - 1);
     host_io_set_mouse_aim(
         mouse_mode,
-        static_cast<int>(std::lround(logical_x)),
-        static_cast<int>(std::lround(logical_y)));
+        aim_x,
+        aim_y);
 
     host_input_set_button(0, 0, any_key(keys, {SDL_SCANCODE_LEFT, SDL_SCANCODE_A}));
     host_input_set_button(0, 1, any_key(keys, {SDL_SCANCODE_RIGHT, SDL_SCANCODE_D}));
@@ -190,19 +204,20 @@ void update_keyboard_and_mouse(SDL_Renderer *renderer, bool mouse_mode) {
 
 void unpack_framebuffer(uint32_t *pixels) {
     const uint8_t *packed = gfx_get_fb();
-    for (int y = 0; y < kGameHeight; ++y) {
-        for (int x = 0; x < kGameWidth; x += 2) {
-            const uint8_t pair = packed[y * (kGameWidth / 2) + x / 2];
-            pixels[y * kGameWidth + x] = kPalette[pair & 0x0f];
-            pixels[y * kGameWidth + x + 1] = kPalette[(pair >> 4) & 0x0f];
+    for (int y = 0; y < kFramebufferHeight; ++y) {
+        for (int x = 0; x < kFramebufferWidth; x += 2) {
+            const uint8_t pair = packed[y * (kFramebufferWidth / 2) + x / 2];
+            pixels[y * kFramebufferWidth + x] = kPalette[pair & 0x0f];
+            pixels[y * kFramebufferWidth + x + 1] = kPalette[(pair >> 4) & 0x0f];
         }
     }
 }
 
 bool render_frame(SDL_Renderer *renderer, SDL_Texture *texture) {
-    uint32_t pixels[kGameWidth * kGameHeight];
+    static uint32_t pixels[kFramebufferWidth * kFramebufferHeight];
     unpack_framebuffer(pixels);
-    if (SDL_UpdateTexture(texture, nullptr, pixels, kGameWidth * sizeof(uint32_t)) != 0) {
+    if (SDL_UpdateTexture(
+            texture, nullptr, pixels, kFramebufferWidth * sizeof(uint32_t)) != 0) {
         std::fprintf(stderr, "Texture update failed: %s\n", SDL_GetError());
         return false;
     }
@@ -217,14 +232,14 @@ bool render_frame(SDL_Renderer *renderer, SDL_Texture *texture) {
 }
 
 bool save_frame_bmp(const char *path) {
-    uint32_t *pixels = new uint32_t[kGameWidth * kGameHeight];
+    uint32_t *pixels = new uint32_t[kFramebufferWidth * kFramebufferHeight];
     unpack_framebuffer(pixels);
     SDL_Surface *surface = SDL_CreateRGBSurfaceFrom(
         pixels,
-        kGameWidth,
-        kGameHeight,
+        kFramebufferWidth,
+        kFramebufferHeight,
         32,
-        kGameWidth * static_cast<int>(sizeof(uint32_t)),
+        kFramebufferWidth * static_cast<int>(sizeof(uint32_t)),
         0x00ff0000u,
         0x0000ff00u,
         0x000000ffu,
@@ -263,6 +278,8 @@ int main(int argc, char **argv) {
     int frame_limit = -1;
     bool muted = false;
     bool demo = false;
+    bool god_demo = false;
+    bool demo_fire = true;
     bool fast = false;
     const char *screenshot_path = nullptr;
     for (int i = 1; i < argc; ++i) {
@@ -275,6 +292,11 @@ int main(int argc, char **argv) {
             muted = true;
         } else if (std::strcmp(argv[i], "--demo") == 0) {
             demo = true;
+        } else if (std::strcmp(argv[i], "--god") == 0) {
+            god_demo = true;
+            demo = true;
+        } else if (std::strcmp(argv[i], "--no-fire") == 0) {
+            demo_fire = false;
         } else if (std::strcmp(argv[i], "--fast") == 0) {
             fast = true;
         } else if (std::strcmp(argv[i], "--screenshot") == 0) {
@@ -301,11 +323,11 @@ int main(int argc, char **argv) {
     }
 
     SDL_Window *window = SDL_CreateWindow(
-        "Fruit Jam Railshooter (macOS host)",
+        "Fruit Jam: Vector Raid (SDL host)",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
-        kGameWidth * kWindowScale,
-        kGameHeight * kWindowScale,
+        kLogicalWidth * kWindowScale,
+        kLogicalHeight * kWindowScale,
         SDL_WINDOW_RESIZABLE | SDL_WINDOW_ALLOW_HIGHDPI);
     if (window == nullptr) {
         std::fprintf(stderr, "Window creation failed: %s\n", SDL_GetError());
@@ -323,15 +345,15 @@ int main(int argc, char **argv) {
         SDL_Quit();
         return 1;
     }
-    SDL_RenderSetLogicalSize(renderer, kGameWidth, kGameHeight);
+    SDL_RenderSetLogicalSize(renderer, kFramebufferWidth, kFramebufferHeight);
     SDL_RenderSetIntegerScale(renderer, SDL_TRUE);
 
     SDL_Texture *texture = SDL_CreateTexture(
         renderer,
         SDL_PIXELFORMAT_ARGB8888,
         SDL_TEXTUREACCESS_STREAMING,
-        kGameWidth,
-        kGameHeight);
+        kFramebufferWidth,
+        kFramebufferHeight);
     if (texture == nullptr) {
         std::fprintf(stderr, "Texture creation failed: %s\n", SDL_GetError());
         SDL_DestroyRenderer(renderer);
@@ -428,13 +450,15 @@ int main(int argc, char **argv) {
             host_io_set_mouse_aim(true, target_x, target_y);
             uint16_t buttons = 0;
             const int game_state = native_game_state();
-            if ((game_state == kGameStateTitle || game_state == kGameStateGameOver) &&
-                (rendered_frames & 1) == 0) {
-                buttons |= kXinputStart;
+            if (game_state == kGameStateTitle && god_demo && rendered_frames < 2) {
+                if (rendered_frames == 0) buttons |= kXinputDpadRight;
+            } else if ((game_state == kGameStateTitle || game_state == kGameStateGameOver) &&
+                       (rendered_frames & 1) == 0) {
+                    buttons |= kXinputStart;
             }
             if (rendered_frames % 150 == 20) buttons |= kXinputB;
             if (rendered_frames % 420 == 80) buttons |= kXinputY;
-            const uint8_t trigger = has_target && rendered_frames % 11 == 0 ? 255 : 0;
+            const uint8_t trigger = demo_fire && has_target && rendered_frames % 11 == 0 ? 255 : 0;
             native_pad_update_xinput(0, buttons, 0, 0, 0, 0, 0, trigger);
         } else {
             update_controller(controller);
@@ -464,9 +488,12 @@ int main(int argc, char **argv) {
         return 1;
     }
     if (demo) {
-        std::printf("Demo summary: state=%d wave=%d score=%d enemies=%d frames=%d\n",
+        std::printf("Demo summary: state=%d wave=%d score=%d enemies=%d frames=%d "
+                    "god=%d ammo=%d lives=%d shield=%d\n",
                     native_game_state(), native_game_wave(), native_game_score(),
-                    native_game_live_enemies(), rendered_frames);
+                    native_game_live_enemies(), rendered_frames,
+                    native_game_god_mode() ? 1 : 0, native_game_ammo(),
+                    native_game_lives(), native_game_shield());
     }
 
     close_controller(&controller);

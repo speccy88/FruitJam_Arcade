@@ -1,13 +1,23 @@
 # Fruit Jam Arcade
 
 Native arcade-game firmware and reusable cabinet-I/O foundation for the
-[Adafruit Fruit Jam](https://www.adafruit.com/product/6313) RP2350B board.
+[Adafruit Fruit Jam](https://www.adafruit.com/product/6200) RP2350B board.
 
-The first game is **Fruit Jam: Vector Raid**, a fast 128×128 wireframe rail
+The first game is **Fruit Jam: Vector Raid**, a fast multi-environment rail
 shooter with DVI video, I2S audio, USB controller support, and physical arcade
-I/O hooks.
+I/O hooks. Gameplay stays in a stable 128×128 design space while Fruit Jam now
+renders it into a true 384×384 framebuffer. Lines, curves, ellipses, filled
+surfaces, and silhouettes are rasterized at that full density instead of being
+128×128 pixels repeated by the DVI hardware.
 
-![Fruit Jam: Vector Raid gameplay, fighting the Overseer boss](assets/vector-raid-gameplay.png)
+| God Test selection | Close dogfight |
+| :---: | :---: |
+| ![Selecting God Test on the Vector Raid title screen](assets/vector-raid-modes.png) | ![Vector Raid close dogfight](assets/vector-raid-gameplay.png) |
+| Abyssal traffic | Overseer battle |
+| ![Flying past an organic creature in the Abyssal Sea](assets/vector-raid-abyssal.png) | ![Fighting the Overseer in the alien forest](assets/vector-raid-overseer.png) |
+
+These are deterministic SDL host captures of the shared game renderer at the
+Fruit Jam 384×384 render scale, not photographs or DVI captures from a board.
 
 > **This is not a PICO-8 clone.** Fruit Jam Arcade boots directly into native
 > C/C++ game firmware. It has no cartridge loader, Lua runtime, fantasy-console
@@ -34,14 +44,26 @@ to build on.
 Vector Raid is a native 60 Hz rail shooter:
 
 - escalating sectors and enemy formations
-- five regular enemy classes and an Overseer boss every five waves
-- shootable enemy projectiles and telegraphed attacks
+- an automatic ride director with pursuit runs, close dogfights, large flybys,
+  banked turns, climbs, dives, occasional evasions, and protected cover beats
+- six two-wave location chapters: asteroid chase, mountain run, alien forest,
+  underwater abyss, crystal cavern, and orbital ruins
+- layered textured backdrops, smooth and angular scenery, foreground vehicle
+  framing, chase wingmen, capital ships, creatures, and structures
+- seven regular enemy classes with unique multi-part silhouettes and an
+  Overseer carrier boss every five waves
+- five visually and mechanically distinct shootable attack types: bolts,
+  plasma, missiles, lances, and spread shards
 - shield damage, three hulls, recovery invulnerability, and pickups
 - projection-matched hitboxes and critical core hits
 - timed reloads, hit chains, and score multipliers up to ×5
 - a screen-clearing Pulse Wave charged through accurate play
-- animated tunnel themes, rotating meshes, particles, camera shake, and damage effects
-- procedural four-channel title, gameplay, and boss music
+- depth-curved routes, rotating meshes, particles, camera shake, and damage effects
+- location-specific procedural music with bass, lead, pad, and percussion
+- eight-voice stereo synthesis with panning, envelopes, pitch sweeps, and
+  layered weapon, impact, pickup, reload, warning, and destruction effects
+- selectable **God Test** startup mode with one-shot kills, unlimited ammo, and
+  unlimited lives
 - fixed-size gameplay pools with no allocation in the frame loop
 
 ## Foundation
@@ -49,19 +71,30 @@ Vector Raid is a native 60 Hz rail shooter:
 | Layer | What it provides |
 | --- | --- |
 | Game | Native C game state, enemies, scoring, waves, rendering, and procedural audio |
-| Graphics | 128×128 4-bit indexed framebuffer, primitives, ASCII HUD text, and RGB565 conversion |
+| Graphics | 128×128 design coordinates, 384×384 Fruit Jam raster, 4-bit indexed framebuffer, smooth ellipse/circle and sharp polygon primitives, HUD text, and RGB565 conversion |
 | 3D | Lightweight wireframe meshes, projection, tunnel drawing, and hitbox alignment |
 | Video | RP2350 HSTX DVI output |
-| Audio | Four-channel synth, I2S PIO, DMA, and Fruit Jam codec setup |
+| Audio | Eight stereo synth voices, envelopes, pitch slides, I2S PIO, DMA, and Fruit Jam codec setup |
 | USB | PIO-USB host with HID, XInput, keyboard, mouse, and controller support |
 | Arcade I/O | Trigger feedback, muzzle output, service/start/coin buttons, status LED, and optional ADC aim |
-| PSRAM | Optional external-PSRAM initialization plus a TLSF allocation API for future games and assets |
-| Host runner | SDL2 build of the same game, graphics, input, and audio code for macOS development |
+| PSRAM | Optional external-PSRAM initialization plus a TLSF allocation API for future decoded art, sample banks, and replay data |
+| Host runner | SDL2 build of the same game, graphics, input, and audio code for Linux and macOS development |
 
 The USB implementation remains in `usb-host/` and `Pico-PIO-USB/`. It is kept
 as a first-class part of the foundation.
 
 ## Current controls
+
+### Startup mode
+
+On the title screen, use Left/Right or the controller D-pad to choose:
+
+- **Arcade**: standard damage, three hulls, and an eight-shot magazine.
+- **God Test**: every direct hit destroys its target, ammo never decreases,
+  reload is disabled, and damage can never consume a hull. Score still updates
+  for feedback but does not replace the Arcade high score.
+
+Press Return or controller Start to launch the selected mode.
 
 ### USB controller
 
@@ -142,15 +175,43 @@ build/fruitjam_railshooter.uf2
 Hold BOOTSEL while connecting the Fruit Jam over USB-C, then copy the UF2 to the
 mounted RP2350 drive.
 
-## Run on macOS
+## Run on macOS or Linux
 
 The SDL2 host runner uses the same game, renderer, raw-pad state, and graphics
-code as the firmware:
+code as the firmware. It renders a 256×256 framebuffer by default while aim,
+hit testing, and layouts remain in the shared 128×128 design space:
+
+macOS with Homebrew:
 
 ```sh
 brew install cmake sdl2 pkg-config
+```
+
+Ubuntu or Debian Linux:
+
+```sh
+sudo apt-get update
+sudo apt-get install build-essential cmake libsdl2-dev pkg-config
+```
+
+Then build and run on either platform:
+
+```sh
 ./host/run.sh
 ```
+
+The host render density is a single CMake setting from 1 through 8. For
+example, to test a 384×384 framebuffer without changing gameplay code:
+
+```sh
+cmake -S host -B host/build-3x -DGFX_SCALE=3
+cmake --build host/build-3x --parallel
+./host/build-3x/fruitjam_railshooter_host
+```
+
+Fruit Jam firmware uses `GFX_SCALE=3`: a 384×384 indexed render target converted
+to a 384×384 RGB565 scanout buffer, centered in 640×480 DVI. The compile-time
+guard in `src/dvi.c` keeps the renderer and HSTX DMA dimensions matched.
 
 For a deterministic headless gameplay smoke test:
 
@@ -160,13 +221,40 @@ SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
   --screenshot /tmp/vector-raid.bmp
 ```
 
+Add `--god` to select God Test automatically for a synthetic demo. Add
+`--no-fire` with `--demo` to let enemies approach for visual QA.
+
+The `Linux SDL host` GitHub Actions workflow builds the 384×384 profile on
+Ubuntu and runs both the Arcade and God Test 7,200-frame smoke tests on every
+push to `main` or a `codex/*` branch.
+
 See [host/README.md](host/README.md) for all runner options.
+
+## Fruit Jam resource profile
+
+The firmware keeps the live video and audio DMA paths in internal SRAM:
+
+- 73,728-byte packed 4-bit 384×384 render target
+- 294,912-byte RGB565 DVI scanout buffer
+- 20,704-byte HSTX DMA command list
+- two 256-frame stereo audio buffers and eight synth voices
+
+The current linked image leaves roughly 86 KiB in the RP2350B main SRAM region,
+with the two 4 KiB core stacks in their dedicated scratch banks. HSTX video,
+PIO I2S audio, and USB use DMA/PIO so the 252 MHz game core can spend its frame
+budget on projection, filled geometry, particles, and indexed-to-RGB conversion.
+
+PSRAM is intentionally not placed in the live HSTX or audio DMA path. The game
+is procedural and its fixed pools fit in internal SRAM, so external memory would
+add latency without improving this build. The allocator remains ready for a
+future decoded sprite atlas, ADPCM sample cache, replay buffer, or larger game.
 
 ## Optional PSRAM allocator
 
-Vector Raid deliberately uses static pools, but the foundation retains the
-Fruit Jam's external PSRAM support for future games, larger asset sets, replay
-buffers, and streamed content.
+Vector Raid deliberately uses static pools and keeps time-critical scanout in
+internal SRAM, but the foundation retains the Fruit Jam's external PSRAM
+support for future games, larger asset sets, replay buffers, and streamed
+content.
 
 Call `arcade_psram_init()` before using:
 
@@ -187,7 +275,7 @@ src/wire3d.c            Wireframe projection and drawing
 src/native_io.c         Cabinet GPIO and optional analog aiming
 src/native_pad.c        Raw XInput state boundary
 src/native_main.cpp     Fruit Jam startup and USB adapter wiring
-src/gfx.c               Indexed framebuffer and drawing primitives
+src/gfx.c               Scalable indexed framebuffer and drawing primitives
 src/audio.c             I2S/DMA synth and codec driver
 src/dvi.c               HSTX DVI output
 src/psram_allocator.c   Optional external-memory heap

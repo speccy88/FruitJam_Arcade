@@ -16,6 +16,10 @@ int native_game_live_enemies(void);
 int native_game_score(void);
 int native_game_wave(void);
 int native_game_state(void);
+bool native_game_god_mode(void);
+int native_game_ammo(void);
+int native_game_lives(void);
+int native_game_shield(void);
 bool native_game_demo_target(int *x, int *y);
 
 #ifdef __cplusplus

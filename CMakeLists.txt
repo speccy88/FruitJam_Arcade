@@ -69,6 +69,7 @@ target_include_directories(fruitjam_railshooter PRIVATE
 target_compile_definitions(fruitjam_railshooter PRIVATE
     PICO_STACK_SIZE=0x1000
     ENABLE_ADC_AIM=$<BOOL:${ENABLE_ADC_AIM}>
+    GFX_SCALE=3
 )
 target_link_libraries(fruitjam_railshooter PRIVATE
     arcade_psram fwUSBHost pico_stdlib hardware_pio hardware_spi hardware_sync

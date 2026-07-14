@@ -7,6 +7,7 @@
 #include "hardware/clocks.h"
 #include "hardware/gpio.h"
 #include "audio_i2s.pio.h"
+#include <limits.h>
 #include <string.h>
 #include <math.h>
 
@@ -35,11 +36,19 @@ static int16_t sine_table[256];
 // --- Synth channel state ---
 typedef struct {
     uint32_t phase;         // phase accumulator
-    uint32_t phase_inc;     // frequency as phase increment
+    uint64_t phase_inc_q16; // frequency as a Q32.16 phase increment
+    int64_t  phase_step_q16;// per-sample pitch slide
     int32_t  remaining;     // samples remaining (-1 = infinite)
-    int16_t  volume;        // 0-255
+    int32_t  attack_remaining;
+    int32_t  release_samples;
+    uint32_t envelope_q16;  // 0..65535
+    uint32_t attack_step_q16;
+    uint32_t release_step_q16;
+    uint16_t left_gain;     // 0..255
+    uint16_t right_gain;    // 0..255
     uint8_t  waveform;      // WAVE_* constant
     uint16_t noise_lfsr;    // LFSR state for noise
+    uint8_t  noise_index;
     bool     active;
 } synth_channel_t;
 
@@ -178,8 +187,26 @@ static void codec_init(void) {
 
 // --- Waveform generation (called from DMA ISR — must be in RAM) ---
 
-static inline int16_t __not_in_flash_func(synth_sample)(synth_channel_t *ch) {
+static inline int16_t __not_in_flash_func(synth_sample)(synth_channel_t *ch,
+                                                        uint32_t *envelope_q16) {
     if (!ch->active) return 0;
+
+    if (ch->attack_remaining > 0) {
+        ch->envelope_q16 += ch->attack_step_q16;
+        ch->attack_remaining--;
+        if (ch->attack_remaining == 0 || ch->envelope_q16 > 65535u) {
+            ch->envelope_q16 = 65535u;
+        }
+    } else if (ch->remaining > 0 && ch->release_samples > 0 &&
+               ch->remaining <= ch->release_samples) {
+        if (ch->envelope_q16 > ch->release_step_q16) {
+            ch->envelope_q16 -= ch->release_step_q16;
+        } else {
+            ch->envelope_q16 = 0;
+        }
+    }
+
+    *envelope_q16 = ch->envelope_q16;
 
     int16_t sample;
     uint8_t idx = ch->phase >> 24;  // top 8 bits → 256-entry index
@@ -202,10 +229,11 @@ static inline int16_t __not_in_flash_func(synth_sample)(synth_channel_t *ch) {
         break;
     case WAVE_NOISE:
         // 16-bit LFSR with taps at bits 0, 1, 5, and 6.
-        if (idx != ((ch->phase - ch->phase_inc) >> 24)) {
+        if (idx != ch->noise_index) {
             uint16_t bit = ((ch->noise_lfsr >> 0) ^ (ch->noise_lfsr >> 1) ^
                             (ch->noise_lfsr >> 5) ^ (ch->noise_lfsr >> 6)) & 1;
             ch->noise_lfsr = (ch->noise_lfsr >> 1) | (bit << 15);
+            ch->noise_index = idx;
         }
         sample = (int16_t)(ch->noise_lfsr - 32768);
         break;
@@ -214,7 +242,8 @@ static inline int16_t __not_in_flash_func(synth_sample)(synth_channel_t *ch) {
         break;
     }
 
-    ch->phase += ch->phase_inc;
+    ch->phase += (uint32_t)(ch->phase_inc_q16 >> 16);
+    ch->phase_inc_q16 = (uint64_t)((int64_t)ch->phase_inc_q16 + ch->phase_step_q16);
 
     // Duration countdown
     if (ch->remaining > 0) {
@@ -226,23 +255,42 @@ static inline int16_t __not_in_flash_func(synth_sample)(synth_channel_t *ch) {
     return sample;
 }
 
+static inline int32_t __not_in_flash_func(apply_voice_gain)(int16_t sample,
+                                                            uint32_t envelope_q16,
+                                                            uint16_t gain) {
+    int32_t enveloped = (int32_t)(((int64_t)sample * envelope_q16) >> 16);
+    return (enveloped * (int32_t)gain) >> 8;
+}
+
+// Fast soft knee. It leaves most of the signal untouched while making normal
+// multi-voice overlap less likely to turn into harsh full-scale clipping.
+static inline int16_t __not_in_flash_func(soft_clip)(int32_t sample) {
+    const int32_t knee = 24576;
+    int32_t magnitude = sample < 0 ? -sample : sample;
+    if (magnitude > knee) magnitude = knee + ((magnitude - knee) >> 2);
+    if (magnitude > 32767) magnitude = 32767;
+    return (int16_t)(sample < 0 ? -magnitude : magnitude);
+}
+
 static void __not_in_flash_func(fill_audio_buffer)(int32_t *buf, int count) {
     if (audio_paused) {
         memset(buf, 0, count * sizeof(int32_t));
         return;
     }
     for (int i = 0; i < count; i++) {
-        int32_t mix = 0;
-        // Basic synth channels (audio.tone API)
+        int32_t mix_left = 0;
+        int32_t mix_right = 0;
         for (int c = 0; c < AUDIO_NUM_CHANNELS; c++) {
-            mix += synth_sample(&channels[c]);
+            synth_channel_t *ch = &channels[c];
+            uint32_t envelope_q16 = 0;
+            int16_t sample = synth_sample(ch, &envelope_q16);
+            mix_left += apply_voice_gain(sample, envelope_q16, ch->left_gain);
+            mix_right += apply_voice_gain(sample, envelope_q16, ch->right_gain);
         }
-        // Clip to int16
-        if (mix > 32767) mix = 32767;
-        if (mix < -32768) mix = -32768;
-        int16_t s = (int16_t)mix;
-        // Pack stereo: left in upper 16 bits, right in lower 16 (MSB first, shift left)
-        buf[i] = ((int32_t)s << 16) | ((uint16_t)s);
+        int16_t left = soft_clip(mix_left);
+        int16_t right = soft_clip(mix_right);
+        // Pack stereo: left in upper 16 bits, right in lower 16.
+        buf[i] = (int32_t)(((uint32_t)(uint16_t)left << 16) | (uint16_t)right);
     }
 }
 
@@ -350,7 +398,9 @@ bool audio_init(void) {
     memset(channels, 0, sizeof(channels));
     for (int i = 0; i < AUDIO_NUM_CHANNELS; i++) {
         channels[i].noise_lfsr = 0xACE1;
-        channels[i].volume = 255;
+        channels[i].noise_index = 0xff;
+        channels[i].left_gain = AUDIO_VOLUME_MAX;
+        channels[i].right_gain = AUDIO_VOLUME_MAX;
     }
 
     codec_init();
@@ -359,18 +409,90 @@ bool audio_init(void) {
 }
 
 void audio_tone(int channel, float freq, int duration_ms, int waveform) {
+    audio_tone_ex(channel, freq, freq, duration_ms, waveform,
+                  AUDIO_VOLUME_MAX, AUDIO_PAN_CENTER, 0, 0);
+}
+
+static int32_t milliseconds_to_samples(int milliseconds) {
+    if (milliseconds <= 0) return 0;
+    int64_t samples = ((int64_t)milliseconds * SAMPLE_RATE) / 1000;
+    if (samples < 1) samples = 1;
+    if (samples > INT32_MAX) samples = INT32_MAX;
+    return (int32_t)samples;
+}
+
+static uint64_t frequency_to_phase_inc_q16(float frequency) {
+    const float nyquist = (float)SAMPLE_RATE * 0.5f;
+    if (frequency > nyquist) frequency = nyquist;
+    uint32_t phase_inc = (uint32_t)(frequency * 4294967296.0f / (float)SAMPLE_RATE);
+    return (uint64_t)phase_inc << 16;
+}
+
+void audio_tone_ex(int channel, float frequency, float end_frequency,
+                   int duration_ms, int waveform, int volume, int pan,
+                   int attack_ms, int release_ms) {
     if (channel < 0 || channel >= AUDIO_NUM_CHANNELS) return;
-    if (freq <= 0.0f) return;
+    if (frequency <= 0.0f) return;
+    if (end_frequency <= 0.0f) end_frequency = frequency;
     if (waveform < 0 || waveform > WAVE_NOISE) waveform = WAVE_SQUARE;
+    if (volume < 0) volume = 0;
+    if (volume > AUDIO_VOLUME_MAX) volume = AUDIO_VOLUME_MAX;
+    if (pan < AUDIO_PAN_LEFT) pan = AUDIO_PAN_LEFT;
+    if (pan > AUDIO_PAN_RIGHT) pan = AUDIO_PAN_RIGHT;
+
+    const int32_t total_samples = milliseconds_to_samples(duration_ms);
+    int32_t attack_samples = milliseconds_to_samples(attack_ms);
+    int32_t release_samples = milliseconds_to_samples(release_ms);
+    if (total_samples == 0) {
+        release_samples = 0;
+        end_frequency = frequency;
+    } else {
+        int64_t articulation_samples = (int64_t)attack_samples + release_samples;
+        if (articulation_samples > total_samples) {
+            attack_samples = (int32_t)((int64_t)attack_samples * total_samples /
+                                       articulation_samples);
+            release_samples = total_samples - attack_samples;
+        }
+    }
+
+    uint16_t left_gain = (uint16_t)volume;
+    uint16_t right_gain = (uint16_t)volume;
+    if (pan > 0) {
+        left_gain = (uint16_t)((volume * (AUDIO_PAN_RIGHT - pan)) /
+                               AUDIO_PAN_RIGHT);
+    } else if (pan < 0) {
+        right_gain = (uint16_t)((volume * (pan - AUDIO_PAN_LEFT)) /
+                                AUDIO_PAN_RIGHT);
+    }
+
+    const uint64_t start_inc_q16 = frequency_to_phase_inc_q16(frequency);
+    const uint64_t end_inc_q16 = frequency_to_phase_inc_q16(end_frequency);
+    int64_t phase_step_q16 = 0;
+    if (total_samples > 1) {
+        phase_step_q16 = ((int64_t)end_inc_q16 - (int64_t)start_inc_q16) /
+                         (total_samples - 1);
+    }
 
     const uint32_t irq_state = save_and_disable_interrupts();
     synth_channel_t *ch = &channels[channel];
     ch->active = false;
     ch->phase = 0;
-    ch->phase_inc = (uint32_t)(freq * 4294967296.0f / (float)SAMPLE_RATE);
+    ch->phase_inc_q16 = start_inc_q16;
+    ch->phase_step_q16 = phase_step_q16;
     ch->waveform = (uint8_t)waveform;
-    ch->remaining = (duration_ms > 0) ? (int32_t)((duration_ms * SAMPLE_RATE) / 1000) : -1;
+    ch->remaining = total_samples > 0 ? total_samples : -1;
+    ch->attack_remaining = attack_samples;
+    ch->release_samples = release_samples;
+    ch->envelope_q16 = attack_samples > 0 ? 0u : 65535u;
+    ch->attack_step_q16 = attack_samples > 0 ? 65535u / (uint32_t)attack_samples : 0u;
+    if (attack_samples > 0 && ch->attack_step_q16 == 0) ch->attack_step_q16 = 1;
+    ch->release_step_q16 = release_samples > 0
+        ? 65535u / ((uint32_t)release_samples + 1u) : 0u;
+    if (release_samples > 0 && ch->release_step_q16 == 0) ch->release_step_q16 = 1;
+    ch->left_gain = left_gain;
+    ch->right_gain = right_gain;
     ch->noise_lfsr = 0xACE1;
+    ch->noise_index = 0xff;
     ch->active = true;
     restore_interrupts(irq_state);
 }

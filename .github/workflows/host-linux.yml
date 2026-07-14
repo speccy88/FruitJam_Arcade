@@ -1,0 +1,57 @@
+name: Linux SDL host
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke-test:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v5
+
+      - name: Install SDL host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            libsdl2-dev \
+            ninja-build \
+            pkg-config
+
+      - name: Configure 384x384 host renderer
+        run: |
+          cmake \
+            -S host \
+            -B host/build-linux \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGFX_SCALE=3
+
+      - name: Build Linux host
+        run: cmake --build host/build-linux --parallel
+
+      - name: Run Arcade smoke test
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          ./host/build-linux/fruitjam_railshooter_host \
+            --demo --fast --frames 7200
+
+      - name: Run God Test smoke test
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: |
+          ./host/build-linux/fruitjam_railshooter_host \
+            --god --fast --mute --frames 7200
